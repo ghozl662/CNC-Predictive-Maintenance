@@ -1,62 +1,51 @@
 # 🏭 CNC Milling Machine Predictive Maintenance: A Physics-Informed Digital Twin
 
-
-
-
-
-
 ## 📌 Executive Summary
-Unplanned machine downtime is one of the largest cost drivers in modern manufacturing. Traditional maintenance strategies usually fall into two categories: **Reactive** (run-to-failure, which causes catastrophic damage) or **Preventive** (time-based replacement, which wastes perfectly good components). 
+Unplanned machine downtime is one of the largest cost drivers in modern manufacturing. This project develops an end-to-end **Predictive Maintenance (PdM) Pipeline** and a **Live Digital Twin Dashboard** for a CNC Milling Machine using the AI4I 2020 dataset. 
 
-This project develops a **Predictive Maintenance (PdM) Pipeline** and a **Live Digital Twin Dashboard** for a CNC Milling Machine using the AI4I 2020 dataset. By combining raw sensor telemetry with **Physics-Informed Feature Engineering**, this system not only predicts *when* a machine will fail (Prognostics) but also diagnoses *which* component will fail (Diagnostics).
-
----
-
-## ⚙️ Physics-Informed Feature Engineering (Domain Knowledge)
-Raw sensor data (like RPM or Torque) alone often lacks the context of the physical stress the machine is experiencing. To give the Machine Learning models a deeper "mechanical understanding," I engineered the following features based on machine kinematics and thermodynamics:
-
-### 1. Actual Mechanical Power (Watts)
-A motor spinning fast with no load is fine; a motor spinning slowly under immense torque is struggling. The true measure of spindle motor effort is Mechanical Power.
-* **Formula:** $P = \tau \times \omega$
-* **Applied Equation:** $Power = Torque \times \left( Rotational\_Speed \times \frac{2\pi}{60} \right)$
-* **Engineering Rationale:** Sudden spikes in power consumption indicate that the cutting tool is struggling against the material, which is a strong precursor to **Overstrain Failure (OSF)**.
-
-### 2. Tool Stress Factor (Interaction Metric)
-A brand-new cutting tool can easily withstand high torque. However, applying high torque to a severely worn tool guarantees breakage. 
-* **Formula:** $Stress\_Factor = Torque \times Tool\_Wear$
-* **Engineering Rationale:** This non-linear interaction feature helps the model understand the compounded risk. High stress factors correlate heavily with **Tool Wear Failures (TWF)**.
-
-### 3. Thermal Inefficiency ($\Delta T$)
-* **Formula:** $\Delta T = Process\_Temperature - Air\_Temperature$
-* **Engineering Rationale:** A widening gap between ambient and process temperatures indicates that the machine's cooling/lubrication system is failing to dissipate friction heat, directly predicting **Heat Dissipation Failures (HDF)**.
+By combining raw sensor telemetry with **Physics-Informed Feature Engineering**, this system accurately predicts *when* a machine will fail (Prognostics) and diagnoses *which* component will fail (Diagnostics).
 
 ---
 
-## 🧠 Machine Learning Architecture
+## ⚙️ Phase 1: Physics-Informed Feature Engineering
+Raw sensor data alone lacks the context of the physical stress the machine is experiencing. To give the Machine Learning models a deeper "mechanical understanding," I engineered features based on kinematics and thermodynamics:
 
-The system utilizes a **Dual-Model XGBoost Architecture** to handle both diagnostic and prognostic requirements:
+1. **Mechanical Power (Watts):** $Power = Torque \times \left( Rotational\_Speed \times \frac{2\pi}{60} \right)$
+   * Sudden spikes in actual power consumption indicate tool struggling, a precursor to Overstrain Failure (OSF).
+2. **Tool Stress Factor:** $Stress\_Factor = Torque \times Tool\_Wear$
+   * A non-linear interaction metric capturing the compounded risk of high torque on a worn tool.
+3. **Thermal Inefficiency:** $\Delta T = Process\_Temperature - Air\_Temperature$
 
-### Phase 1: Overcoming the "Accuracy Trap" & Multicollinearity
-* **Correlation Analysis:** A correlation heatmap revealed severe multicollinearity between raw sensors and engineered features (e.g., Torque vs. RPM has a correlation of -0.88). To optimize the model, highly correlated redundant features were dropped, retaining only the most informative physics-based features.
-* **Imbalanced Data Strategy:** CNC failures are rare anomalies. A naive model could easily achieve 96% accuracy simply by predicting "Normal" for every cycle. 
-* **Solution:** I utilized `scale_pos_weight` in XGBoost and shifted the optimization metric from Accuracy to **Recall**. By setting a custom **30% risk threshold**, the system prioritizes catching "hidden disasters" early, successfully identifying **82% of actual critical failures** before they occur.
+### Multicollinearity & Correlation Analysis
+Before modeling, I analyzed the relationships between variables. The heatmap below highlights strong correlations (e.g., Torque and RPM), allowing us to drop redundant raw sensors and rely on our engineered physical metrics.
 
-### Phase 2: The Dual-Models
-1. **Fault Classifier (Diagnostic):** A Multi-Class XGBoost Classifier that identifies the exact failure mode (TWF, HDF, PWF, OSF) to automate spare part procurement.
-2. **RUL Regressor (Prognostic):** An XGBoost Regressor trained to predict the **Remaining Useful Life (RUL)**. It calculates exactly how many machining cycles are left before the degradation path intersects the critical failure limit.
-
-
+![Correlation Heatmap](Relations.png)
 
 ---
 
-## 🖥️ Live Digital Twin Dashboard
-To bridge the gap between Data Science and the factory floor, I deployed the models into a real-time **Digital Twin UI** using Gradio.
+## 🧠 Phase 2: Machine Learning Architecture (XGBoost)
+The core of the system is driven by **XGBoost**. The feature importance chart below proves that our engineered features (`Power_Watts` and `Stress_Factor`) became top predictors, outperforming raw sensors like air temperature or simple tool wear.
 
-**Features of the Dashboard:**
-* **Live Telemetry Input:** Operators (or automated PLCs) feed RPM, Torque, and Tool Wear data.
-* **Dynamic Degradation Tracking:** Real-time plotting of the machine's drift towards the critical failure limit.
-* **RUL Forecasting:** A live countdown of remaining safe production cycles.
-* **AI Action Plan:** Automated, color-coded alerts instructing operators whether to continue production, schedule maintenance, or hit the Emergency Stop.
+![Feature Importance](feature%20importance.png)
+
+### Overcoming the "Accuracy Trap"
+Industrial datasets are highly imbalanced (failures are rare). A model can achieve 96% accuracy by simply guessing "Normal" every time. To build a system that actually saves money on the factory floor, I prioritized **Recall** over absolute accuracy.
+
+**1. Standard Model Evaluation:**
+Initially, the standard model missed several critical failures (False Negatives), which is unacceptable in an industrial setting.
+
+![Standard Confusion Matrix](Confusion%20matrix.png)
+
+**2. Zero-Risk Threshold Optimization (30% Limit):**
+By adjusting the decision threshold to **30.0%**, the system became highly sensitive to early degradation signs. The custom threshold significantly increased the True Positive rate (catching failures before they happen), providing operators with a vital early warning system.
+
+![Custom Threshold Confusion Matrix](Heat%20map.png)
+
+---
+
+## 🖥️ Phase 3: Live Digital Twin Dashboard
+To bridge the gap between Data Science and the factory floor, the models are deployed into a real-time **Digital Twin UI** using Gradio. 
+Operators feed live telemetry, and the system dynamically plots the degradation path, forecasts the **Remaining Useful Life (RUL)**, and issues automated AI action plans.
 
 ---
 
@@ -66,34 +55,14 @@ To bridge the gap between Data Science and the factory floor, I deployed the mod
 predictive-maintenance-cnc/
 │
 ├── data/
-│   └── ai4i2020.csv               # Raw Kaggle dataset
+│   └── ai4i2020.csv                              # Raw Kaggle dataset
 │
 ├── notebooks/
 │   └── 01_predictive_maintenance_modeling.ipynb  # EDA, Feature Eng, & Model Training
 │
 ├── models/
-│   └── milling_ai_bundle_2026.pkl # Exported Dual-XGBoost models & encoders
+│   └── milling_ai_bundle_2026.pkl                # Exported Dual-XGBoost models & encoders
 │
-├── app.py                         # Gradio Live Dashboard Deployment Script
-├── requirements.txt               # Project dependencies
-└── README.md                      # Project documentation
-
-
-🚀 How to Run Locally
-Clone the repository:
-
-Bash
-git clone [https://github.com/yourusername/predictive-maintenance-cnc.git](https://github.com/yourusername/predictive-maintenance-cnc.git)
-cd predictive-maintenance-cnc
-
-Install dependencies:
-
-Bash
-pip install -r requirements.txt
-
-
-Launch the Digital Twin Dashboard:
-
-Bash
-
-python app.py
+├── app.py                                        # Gradio Live Dashboard Deployment Script
+├── requirements.txt                              # Project dependencies
+└── README.md                                     # Project documentation
