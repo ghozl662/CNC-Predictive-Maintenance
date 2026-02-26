@@ -2,7 +2,7 @@
 
 
 
-[Image of predictive maintenance process flow diagram]
+
 
 
 ## 📌 Executive Summary
@@ -95,4 +95,5 @@ pip install -r requirements.txt
 Launch the Digital Twin Dashboard:
 
 Bash
+
 python app.py
