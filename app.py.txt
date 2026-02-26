@@ -1,0 +1,172 @@
+import gradio as gr
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from xgboost import XGBRegressor
+import warnings
+warnings.filterwarnings('ignore')
+
+plt.style.use('default')
+
+# ==============================================================================
+# 🧠 Step 1: Train the Real Remaining Useful Life (RUL) Model on Kaggle Data
+# ==============================================================================
+print("⏳ Training the Remaining Useful Life (RUL) model on real data...")
+
+if 'df_cleaned' in globals():
+    # Kaggle data lacks a ready-made RUL column, so we engineer it as the Target for training
+    # We assume the machine breaks down at around 250 minutes of tool wear, factoring in torque
+    df_cleaned['RUL_Target'] = 250 - df_cleaned['Tool wear [min]'] - (df_cleaned['Torque [Nm]'] * 0.15)
+    df_cleaned['RUL_Target'] = df_cleaned['RUL_Target'].apply(lambda x: max(0, x))
+
+    # Selecting the impactful features
+    X_rul_features = df_cleaned[['Rotational speed [rpm]', 'Torque [Nm]', 'Tool wear [min]',
+                                 'Temp_Difference', 'Power_Watts', 'Stress_Factor']].copy()
+
+    # 💡 Fixing the brackets issue for XGBoost compatibility
+    X_rul_features.columns = ['Rotational speed _rpm_', 'Torque _Nm_', 'Tool wear _min_',
+                              'Temp_Difference', 'Power_Watts', 'Stress_Factor']
+
+    y_rul_target = df_cleaned['RUL_Target']
+
+    # Training the XGBRegressor model
+    real_rul_model = XGBRegressor(n_estimators=100, max_depth=4, learning_rate=0.1, random_state=42)
+    real_rul_model.fit(X_rul_features, y_rul_target)
+    print("✅ Real RUL model trained and integrated successfully!")
+else:
+    print("⚠️ Warning: df_cleaned data is not found in memory!")
+
+# ==============================================================================
+# 📊 Step 2: Live Database Initialization
+# ==============================================================================
+history_data = {
+    'Cycle': [1, 2, 3],
+    'Tool_wear': [10, 15, 20],
+    'Torque': [40, 41, 42],
+    'RUL': [240, 235, 230]
+}
+df_history = pd.DataFrame(history_data)
+cycle_counter = 3
+
+# ==============================================================================
+# ⚙️ Step 3: The Smart Function (Merging the Models)
+# ==============================================================================
+def update_dashboard(speed, torque, tool_wear, temp_process, temp_air):
+    global df_history, cycle_counter
+    cycle_counter += 1
+
+    try:
+        # 1. Calculating engineered features
+        temp_diff = temp_process - temp_air
+        power_watts = torque * speed * (2 * np.pi / 60)
+        stress_factor = torque * tool_wear
+
+        input_data = pd.DataFrame({
+            'Rotational speed _rpm_': [speed], 'Torque _Nm_': [torque],
+            'Tool wear _min_': [tool_wear], 'Temp_Difference': [temp_diff],
+            'Power_Watts': [power_watts], 'Stress_Factor': [stress_factor]
+        })
+
+        # 2. First Model: Fault Diagnostics
+        if 'fault_model' in globals():
+            predicted_code = fault_model.predict(input_data)[0]
+            fault_name = encoder.inverse_transform([predicted_code])[0]
+        else:
+            fault_name = "N/A"
+
+        # 3. Second Model: Remaining Useful Life (RUL) Prognostics
+        if 'real_rul_model' in globals():
+            estimated_rul = float(real_rul_model.predict(input_data)[0])
+            estimated_rul = max(0, estimated_rul) # Prevent negative numbers
+        else:
+            estimated_rul = max(0, 250 - tool_wear) # Fallback alternative
+
+        # 4. Updating data and plotting
+        new_row = pd.DataFrame({
+            'Cycle': [cycle_counter],
+            'Tool_wear': [tool_wear],
+            'Torque': [torque],
+            'RUL': [estimated_rul]
+        })
+        df_history = pd.concat([df_history, new_row], ignore_index=True)
+
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8))
+
+        ax1.plot(df_history['Cycle'], df_history['Tool_wear'], marker='o', color='#d35400', linewidth=2, label='Current Tool Wear (min)')
+        ax1.axhline(y=200, color='#c0392b', linestyle='--', linewidth=2, label='Critical Wear Limit')
+        ax1.set_title(f"Milling Machine Degradation Path - Up to Cycle {cycle_counter}", weight='bold', fontsize=12)
+        ax1.set_ylabel("Tool Wear (min)")
+        ax1.legend()
+        ax1.grid(True, linestyle='--', alpha=0.6)
+
+        ax2.plot(df_history['Cycle'], df_history['RUL'], marker='s', color='#2980b9', linewidth=2, label='Remaining Useful Life (RUL)')
+        ax2.axhline(y=30, color='#f39c12', linestyle='--', linewidth=2, label='Warning (Reorder Threshold)')
+        ax2.set_title("Remaining Useful Life (RUL) Forecast [Powered by XGBoost]", weight='bold', fontsize=12)
+        ax2.set_xlabel("Production Cycle")
+        ax2.set_ylabel("Cycles Left")
+        ax2.legend()
+        ax2.grid(True, linestyle='--', alpha=0.6)
+
+        plt.tight_layout()
+
+        # 5. The Smart Report Configuration
+        if tool_wear > 200 or torque > 60:
+            status, icon = "CRITICAL DANGER!", "🛑"
+            alert = f"STOP THE MILLING MACHINE! Expected Fault: **{fault_name}**"
+        elif tool_wear > 150 or torque > 50:
+            status, icon = "WARNING (High Stress)", "⚠️"
+            alert = f"Schedule tool replacement. Potential Fault: **{fault_name}**"
+        else:
+            status, icon = "STABLE", "✅"
+            alert = "Milling Machine is running smoothly. No action required."
+
+        report = f"""
+        ### {icon} System Status: **{status}**
+        ---
+        * **⏳ Estimated RUL:** `{estimated_rul:.0f}` machining cycles remaining.
+        * **🔧 AI Action Plan:** {alert}
+        """
+
+        return fig, report
+
+    except Exception as e:
+        return None, f"❌ Error: {str(e)}"
+
+# ==============================================================================
+# 💻 Step 4: The Light User Interface
+# ==============================================================================
+theme = gr.themes.Soft(primary_hue="blue", neutral_hue="slate")
+
+with gr.Blocks(theme=theme, title="CNC Milling Maintenance") as app:
+    with gr.Row():
+        with gr.Column():
+            gr.Markdown("""
+                # 🏭 CNC Milling Machine - Digital Twin Monitor
+                ### Real-time predictive maintenance powered by Dual XGBoost Models (RUL & Fault Classifier).
+                """)
+
+    with gr.Row():
+        with gr.Column(scale=1, variant="panel"):
+            gr.Markdown("### 📋 Machining Cycle Data Entry")
+            gr.Markdown("---")
+            speed_in = gr.Slider(1000, 3000, 1500, step=50, label="⚙️ Rotational Speed (RPM)")
+            torque_in = gr.Slider(10, 100, 42, step=1, label="🔧 Torque (Nm)")
+            wear_in = gr.Slider(0, 250, 30, step=1, label="🗜️ Tool Wear (Minutes)")
+
+            with gr.Accordion("🌡️ Temperature Settings", open=False):
+                 temp_p_in = gr.Number(310, label="🔥 Process Temp (K)")
+                 temp_a_in = gr.Number(300, label="🌬️ Air Temp (K)")
+
+            submit_btn = gr.Button("🚀 Submit Data & Run AI Analysis", variant="primary", size="lg")
+
+        with gr.Column(scale=2):
+            plot_out = gr.Plot(label="📈 Live Dashboard", container=True)
+            report_out = gr.Markdown(label="🧠 AI Diagnostic Report", value="### ⏳ Waiting for initial cycle data...")
+
+    submit_btn.click(
+        fn=update_dashboard,
+        inputs=[speed_in, torque_in, wear_in, temp_p_in, temp_a_in],
+        outputs=[plot_out, report_out]
+    )
+
+app.launch(share=True)
