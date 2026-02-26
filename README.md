@@ -19,7 +19,7 @@ Raw sensor data alone lacks the context of the physical stress the machine is ex
 ### Multicollinearity & Correlation Analysis
 Before modeling, I analyzed the relationships between variables. The heatmap below highlights strong correlations (e.g., Torque and RPM), allowing us to drop redundant raw sensors and rely on our engineered physical metrics.
 
-![Correlation Heatmap](Relations.png)
+![Correlation Heatmap](25432.png)
 
 ---
 
@@ -66,3 +66,4 @@ predictive-maintenance-cnc/
 ├── app.py                                        # Gradio Live Dashboard Deployment Script
 ├── requirements.txt                              # Project dependencies
 └── README.md                                     # Project documentation
+
